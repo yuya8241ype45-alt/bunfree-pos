@@ -186,13 +186,17 @@ function SummaryTable({ summary, closing }: { summary: CashSummary; closing?: Cl
   const rows: [string, string][] = [
     ['開始時釣銭準備金', yen(summary.float)],
     ['現金売上（受け取った総額）', yen(summary.salesGross)],
-    ['返金額（会計取消）', signedYen(-summary.refunds)],
-    ['売上合計（純額）', yen(summary.salesGross - summary.refunds)],
+    ['現金の返金額（会計取消）', signedYen(-summary.refunds)],
+    ['現金売上の純額', yen(summary.salesGross - summary.refunds)],
     ['売上以外の入金', yen(summary.cashIn)],
     ['売上以外の出金', signedYen(-summary.cashOut)],
     ['入出金合計', signedYen(summary.cashIn - summary.cashOut)],
     ['理論現金残高', yen(summary.expected)],
   ]
+  rows.push(
+    ['（参考）PayPay売上（受け取った総額）', yen(summary.paypaySales ?? 0)],
+    ['（参考）PayPay返金額', signedYen(-(summary.paypayRefunds ?? 0))],
+  )
   if (closing) {
     rows.push(['実際の現金残高', yen(closing.actual)], ['現金差異', signedYen(closing.diff)], ['差異判定', closing.judgement], ['締め日時', formatDateTime(closing.closedAt)])
   }

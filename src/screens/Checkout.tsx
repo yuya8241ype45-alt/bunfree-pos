@@ -3,7 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
 import { checkout } from '../db/ops'
 import { changeFor, newId, yen } from '../lib/calc'
-import type { Sale } from '../lib/types'
+import type { PaymentMethod, Sale } from '../lib/types'
 import { Button, useRunner } from '../ui'
 
 const SHORTCUTS = [1000, 2000, 5000, 10000]
@@ -31,7 +31,11 @@ export default function Checkout({ sessionOpen, sessionLoaded, goRegister }: Pro
   const received = receivedStr === '' ? 0 : Number(receivedStr)
   const change = changeFor(total, received)
   const cartProblem = lines.find((l) => !l.product.active || l.qty > l.product.stock)
-  const canConfirm = sessionOpen && lines.length > 0 && receivedStr !== '' && change !== null && !cartProblem && !busy
+  const ready = sessionOpen && lines.length > 0 && receivedStr !== '' && !cartProblem && !busy
+  const canCash = ready && change !== null
+  // PayPay はお客様のスマホに表示された支払い金額を入力し、合計と一致したときだけ確定できる
+  const canPayPay = ready && received === total
+  const payPayMismatch = lines.length > 0 && receivedStr !== '' && received !== total
 
   const setQty = (id: string, qty: number) =>
     setCart((c) => {
@@ -54,11 +58,12 @@ export default function Checkout({ sessionOpen, sessionLoaded, goRegister }: Pro
     setReceivedStr('')
   }
 
-  const confirm = () =>
+  const confirm = (paymentMethod: PaymentMethod) =>
     run(async () => {
       const sale = await checkout(db, {
         id: checkoutId,
         lines: lines.map((l) => ({ productId: l.product.id, qty: l.qty })),
+        paymentMethod,
         received,
         expectedTotal: total,
       })
@@ -173,7 +178,7 @@ export default function Checkout({ sessionOpen, sessionLoaded, goRegister }: Pro
           <div className="grid grid-cols-2 gap-2">
             <div className="rounded-md border border-gray-300 bg-white px-3 py-1">
               <div className="flex items-center justify-between text-sm text-gray-600">
-                預かり
+                預かり／支払額
                 <button type="button" className="touch-manipulation px-2 text-sm font-bold text-blue-700" onClick={() => setReceivedStr('')}>
                   クリア
                 </button>
@@ -211,14 +216,18 @@ export default function Checkout({ sessionOpen, sessionLoaded, goRegister }: Pro
             </div>
           </div>
 
-          <div className="grid grid-cols-[1fr_2.4fr] gap-2 pb-1">
+          <div className="grid grid-cols-[1fr_1.4fr_1.8fr] gap-2 pb-1">
             <Button variant="dangerOutline" className="h-16 text-lg" disabled={busy || (lines.length === 0 && receivedStr === '')} onClick={reset}>
               リセット
             </Button>
-            <Button variant="primary" className="h-16 text-2xl" disabled={!canConfirm} onClick={confirm}>
-              {busy ? '保存中…' : '会計を確定'}
+            <Button variant="paypay" className="h-16 text-xl" disabled={!canPayPay} onClick={() => confirm('paypay')}>
+              PayPay
+            </Button>
+            <Button variant="primary" className="h-16 text-xl" disabled={!canCash} onClick={() => confirm('cash')}>
+              {busy ? '保存中…' : '現金で確定'}
             </Button>
           </div>
+          {payPayMismatch && <p className="-mt-1 text-sm text-gray-600">PayPayは、合計と同じ金額を入力したときに押せます</p>}
         </div>
       </section>
     </div>
@@ -226,6 +235,21 @@ export default function Checkout({ sessionOpen, sessionLoaded, goRegister }: Pro
 }
 
 function Completed({ sale, onNext }: { sale: Sale; onNext: () => void }) {
+  if (sale.paymentMethod === 'paypay') {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-6 bg-white p-6">
+        <div className="text-xl font-bold text-green-800">PayPayの会計を記録しました（会計No.{sale.no}）</div>
+        <div className="w-full max-w-md rounded-lg border-2 border-red-600 bg-red-50 p-6 text-center">
+          <div className="text-lg font-bold text-red-800">PayPay支払い</div>
+          <div className="text-6xl font-bold tabular-nums">{yen(sale.total)}</div>
+        </div>
+        <p className="text-gray-700">お客様のスマホの支払い完了画面を確認してください。</p>
+        <Button variant="primary" className="h-20 w-full max-w-md text-2xl" onClick={onNext} autoFocus>
+          次のお客様へ
+        </Button>
+      </div>
+    )
+  }
   return (
     <div className="flex h-full flex-col items-center justify-center gap-6 bg-white p-6">
       <div className="text-xl font-bold text-green-800">会計が完了しました（会計No.{sale.no}）</div>

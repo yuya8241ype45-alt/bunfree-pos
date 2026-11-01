@@ -5,7 +5,7 @@ import { cancelSale } from '../db/ops'
 import { formatDateTime, yen } from '../lib/calc'
 import { productSalesCsv, salesCsv } from '../lib/csv'
 import { buildDashboard } from '../lib/summary'
-import type { Sale } from '../lib/types'
+import { PAYMENT_LABEL, type Sale } from '../lib/types'
 import { Button, Field, inputCls, Modal, PageTitle, Stat, download, stamp, td, tdNum, th, thNum, useNotify, useRunner } from '../ui'
 
 export default function Sales() {
@@ -52,8 +52,10 @@ export default function Sales() {
         </select>
       </div>
 
-      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3">
         <Stat label="累計売上金額" value={yen(d.totalSales)} strong />
+        <Stat label="うち現金" value={yen(d.cashSales)} />
+        <Stat label="うちPayPay" value={yen(d.paypaySales)} />
         <Stat label="会計件数" value={`${d.count}件`} />
         <Stat label="販売点数" value={`${d.qty}点`} />
         <Stat label="平均客単価" value={yen(d.average)} />
@@ -99,6 +101,7 @@ export default function Sales() {
               <th className={th}>No.</th>
               <th className={th}>日時</th>
               <th className={th}>明細</th>
+              <th className={th}>支払</th>
               <th className={thNum}>合計</th>
               <th className={thNum}>預かり</th>
               <th className={thNum}>お釣り</th>
@@ -123,9 +126,10 @@ export default function Sales() {
                     </div>
                   )}
                 </td>
+                <td className={`${td} whitespace-nowrap ${s.paymentMethod === 'paypay' ? 'font-bold text-red-700' : ''}`}>{PAYMENT_LABEL[s.paymentMethod]}</td>
                 <td className={`${tdNum} ${s.status === 'cancelled' ? 'line-through' : 'font-bold'}`}>{yen(s.total)}</td>
-                <td className={tdNum}>{yen(s.received)}</td>
-                <td className={tdNum}>{yen(s.change)}</td>
+                <td className={tdNum}>{s.paymentMethod === 'paypay' ? '—' : yen(s.received)}</td>
+                <td className={tdNum}>{s.paymentMethod === 'paypay' ? '—' : yen(s.change)}</td>
                 <td className={td}>{s.status === 'normal' ? '正常' : <span className="font-bold text-red-700">取消</span>}</td>
                 <td className={td}>
                   {s.status === 'normal' && (
@@ -185,7 +189,16 @@ function CancelDialog({ sale, onClose }: { sale: Sale; onClose: () => void }) {
           </tbody>
         </table>
         <div className="rounded-md border-2 border-red-300 bg-red-50 p-3 text-lg">
-          お客様に <strong className="text-2xl tabular-nums">{yen(sale.total)}</strong> を返金してください。
+          {sale.paymentMethod === 'paypay' ? (
+            <>
+              PayPayで支払われた会計です。<strong className="text-2xl tabular-nums">{yen(sale.total)}</strong> の返金は、
+              <strong>PayPay for Business のアプリ・管理画面</strong>から行ってください。レジの現金からは返金しません。
+            </>
+          ) : (
+            <>
+              お客様に <strong className="text-2xl tabular-nums">{yen(sale.total)}</strong> を現金で返金してください。
+            </>
+          )}
           <div className="mt-1 text-base text-gray-700">売上集計から除外し、在庫を戻します。履歴は「取消」として残ります。</div>
         </div>
         <Field label="取消理由（必須）">

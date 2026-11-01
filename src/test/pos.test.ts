@@ -16,7 +16,7 @@ import { exportAll, importAll, validateBackup } from '../db/backup'
 import { cartTotal, changeFor, denomTotal, expectedCash, judge, newId, parseYen } from '../lib/calc'
 import { closingCsv, productSalesCsv, salesCsv } from '../lib/csv'
 import { buildDashboard, buildStockRows } from '../lib/summary'
-import type { Session } from '../lib/types'
+import type { PaymentMethod, Session } from '../lib/types'
 
 let db: PosDB
 let n = 0
@@ -34,8 +34,14 @@ async function ready(stock = 10, float = 20000) {
   await openSession(db, float)
 }
 
-function sell(lines: { productId: string; qty: number }[], expectedTotal: number, received: number, id = newId()) {
-  return checkout(db, { id, lines, expectedTotal, received })
+function sell(
+  lines: { productId: string; qty: number }[],
+  expectedTotal: number,
+  received: number,
+  id = newId(),
+  paymentMethod: PaymentMethod = 'cash',
+) {
+  return checkout(db, { id, lines, expectedTotal, received, paymentMethod })
 }
 
 async function openSessionRecord() {
@@ -301,7 +307,7 @@ describe('保存・バックアップ', () => {
     expect((await other.sessions.toArray())[0].closing!.judgement).toBe('一致')
     // 復元後の会計Noは続きから振られる
     await openSession(other, 0)
-    const next = await checkout(other, { id: newId(), lines: [{ productId: 'P003', qty: 1 }], expectedTotal: 400, received: 400 })
+    const next = await checkout(other, { id: newId(), lines: [{ productId: 'P003', qty: 1 }], expectedTotal: 400, received: 400, paymentMethod: 'cash' })
     expect(next.no).toBe(3)
     await other.delete()
   })
@@ -339,8 +345,8 @@ describe('保存・バックアップ', () => {
     const lines = csv.slice(1).trim().split('\r\n')
     expect(lines).toHaveLength(4)
     expect(lines[1]).toContain('"ブックカバー, ""限定"""')
-    expect(lines[1]).toMatch(/,取消,P001,.*,500,2,1000,1400,2000,600,/)
-    expect(lines[3]).toMatch(/,正常,P004,紙クリップ2種セット,300,1,300,300,300,0,,$/)
+    expect(lines[1]).toMatch(/,取消,現金,P001,.*,500,2,1000,1400,2000,600,/)
+    expect(lines[3]).toMatch(/,正常,現金,P004,紙クリップ2種セット,300,1,300,300,300,0,,$/)
 
     const d = buildDashboard(sales, await db.products.toArray())
     const pcsv = productSalesCsv(d).slice(1).trim().split('\r\n')
@@ -351,6 +357,85 @@ describe('保存・バックアップ', () => {
     await closeSession(db, { '10000': 2, '100': 3 })
     const ccsv = closingCsv(await db.sessions.toArray()).slice(1).trim().split('\r\n')
     expect(ccsv).toHaveLength(2)
-    expect(ccsv[1]).toContain(',20000,1700,1400,0,0,20300,20300,0,一致,2,0,0,0,0,3,0,0,0,0')
+    expect(ccsv[1]).toContain(',20000,1700,1400,0,0,20300,20300,0,一致,0,0,2,0,0,0,0,3,0,0,0,0')
+  })
+})
+
+describe('PayPay', () => {
+  const paypay = (lines: { productId: string; qty: number }[], total: number, paid: number) =>
+    sell(lines, total, paid, newId(), 'paypay')
+
+  it('PayPayの会計は在庫と売上に反映され、お釣りは0', async () => {
+    await ready()
+    const sale = await paypay([{ productId: 'P001', qty: 2 }], 1000, 1000)
+    expect(sale).toMatchObject({ paymentMethod: 'paypay', total: 1000, received: 1000, change: 0 })
+    expect((await db.products.get('P001'))!.stock).toBe(8)
+    const d = buildDashboard(await db.sales.toArray(), await db.products.toArray())
+    expect(d).toMatchObject({ totalSales: 1000, cashSales: 0, paypaySales: 1000, count: 1 })
+  })
+
+  it('支払い金額が合計と一致しなければ確定せず、何も保存されない', async () => {
+    await ready()
+    await expect(paypay([{ productId: 'P001', qty: 2 }], 1000, 900)).rejects.toThrow('一致しません')
+    await expect(paypay([{ productId: 'P001', qty: 2 }], 1000, 1100)).rejects.toThrow('一致しません')
+    expect(await db.sales.count()).toBe(0)
+    expect((await db.products.get('P001'))!.stock).toBe(10)
+  })
+
+  it('PayPayの売上・返金はレジの理論現金残高に入らない', async () => {
+    await ready()
+    await sell([{ productId: 'P001', qty: 1 }], 500, 1000)
+    const p = await paypay([{ productId: 'P002', qty: 2 }], 800, 800)
+    await paypay([{ productId: 'P004', qty: 1 }], 300, 300)
+    await cancelSale(db, p.id, 'PayPayで返金')
+    expect((await db.products.get('P002'))!.stock).toBe(10)
+    const s = await getCashSummary(db, await openSessionRecord())
+    expect(s).toMatchObject({ salesGross: 500, refunds: 0, expected: 20500, paypaySales: 1100, paypayRefunds: 800 })
+    const closing = await closeSession(db, { '10000': 2, '500': 1 })
+    expect(closing).toMatchObject({ diff: 0, judgement: '一致', paypaySales: 1100 })
+    const d = buildDashboard(await db.sales.toArray(), await db.products.toArray())
+    expect(d).toMatchObject({ totalSales: 800, cashSales: 500, paypaySales: 300, count: 2 })
+  })
+
+  it('支払方法がCSVとバックアップに残り、旧形式（v1）のバックアップは現金として読み込む', async () => {
+    await ready()
+    await paypay([{ productId: 'P001', qty: 1 }], 500, 500)
+    const csv = salesCsv(await db.sales.toArray())
+    expect(csv).toContain(',正常,PayPay,P001,')
+    const b = await exportAll(db)
+    expect(b.version).toBe(2)
+    expect(validateBackup(JSON.parse(JSON.stringify(b))).data.sales[0].paymentMethod).toBe('paypay')
+
+    const v1 = JSON.parse(JSON.stringify(b))
+    v1.version = 1
+    delete v1.data.sales[0].paymentMethod
+    v1.data.sales[0].received = 1000
+    v1.data.sales[0].change = 500
+    expect(validateBackup(v1).data.sales[0].paymentMethod).toBe('cash')
+
+    const bad = JSON.parse(JSON.stringify(b))
+    bad.data.sales[0].received = 1000
+    bad.data.sales[0].change = 500
+    expect(() => validateBackup(bad)).toThrow('PayPayの支払い金額')
+  })
+
+  it('旧バージョンのDBの会計は現金として扱われる（DB移行）', async () => {
+    const name = `legacy-${n}`
+    const { default: Dexie } = await import('dexie')
+    const old = new Dexie(name)
+    old.version(1).stores({
+      products: 'id, sortOrder',
+      sales: 'id, &no, createdAt, sessionId, status, refundSessionId',
+      stockLogs: '++id, productId, at, saleId',
+      cashMoves: '++id, sessionId, at',
+      sessions: '++id, openedAt',
+      meta: 'key',
+    })
+    await old.table('sales').add({ id: 'x', no: 1, createdAt: new Date().toISOString(), sessionId: 1, items: [], totalQty: 0, total: 0, received: 0, change: 0, status: 'normal' })
+    old.close()
+    const upgraded = new PosDB(name)
+    await upgraded.open()
+    expect((await upgraded.sales.get('x'))!.paymentMethod).toBe('cash')
+    await upgraded.delete()
   })
 })

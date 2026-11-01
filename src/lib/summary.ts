@@ -4,6 +4,9 @@ export type ProductSales = { productId: string; name: string; qty: number; amoun
 
 export type Dashboard = {
   totalSales: number
+  /** 支払方法別の売上（取消を除く） */
+  cashSales: number
+  paypaySales: number
   count: number
   qty: number
   /** 平均客単価（1円未満は四捨五入）。会計0件なら 0 */
@@ -30,8 +33,11 @@ export function buildDashboard(sales: Sale[], products: Product[]): Dashboard {
   )
   const totalSales = valid.reduce((s, x) => s + x.total, 0)
   const count = valid.length
+  const paypaySales = valid.filter((s) => s.paymentMethod === 'paypay').reduce((s, x) => s + x.total, 0)
   return {
     totalSales,
+    cashSales: totalSales - paypaySales,
+    paypaySales,
     count,
     qty: valid.reduce((s, x) => s + x.totalQty, 0),
     average: count === 0 ? 0 : Math.round(totalSales / count),

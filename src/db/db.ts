@@ -27,6 +27,17 @@ export class PosDB extends Dexie {
       sessions: '++id, openedAt',
       meta: 'key',
     })
+    // v2: 支払方法を追加。既存の会計はすべて現金
+    this.version(2)
+      .stores({ sales: 'id, &no, createdAt, sessionId, status, refundSessionId, paymentMethod' })
+      .upgrade((tx) =>
+        tx
+          .table('sales')
+          .toCollection()
+          .modify((s: Sale) => {
+            if (!s.paymentMethod) s.paymentMethod = 'cash'
+          }),
+      )
     this.on('populate', (tx) => {
       const now = new Date().toISOString()
       return tx.table('products').bulkAdd(INITIAL_PRODUCTS.map((p) => ({ ...p, updatedAt: now })))

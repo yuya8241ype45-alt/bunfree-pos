@@ -7,6 +7,7 @@ export const btn = {
   secondary: 'border-gray-300 bg-white text-gray-900 active:bg-gray-100',
   danger: 'border-red-700 bg-red-700 text-white active:bg-red-800',
   dangerOutline: 'border-red-300 bg-white text-red-700 active:bg-red-50',
+  paypay: 'border-red-600 bg-red-600 text-white active:bg-red-700',
 }
 
 export function Button({

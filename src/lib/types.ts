@@ -21,16 +21,24 @@ export type SaleItem = {
 
 export type SaleStatus = 'normal' | 'cancelled'
 
+/** cash: 現金（レジの現金が動く） / paypay: PayPay（お客様がQRを読んで支払う。レジの現金は動かない） */
+export type PaymentMethod = 'cash' | 'paypay'
+
+export const PAYMENT_LABEL: Record<PaymentMethod, string> = { cash: '現金', paypay: 'PayPay' }
+
 export type Sale = {
   id: string
   no: number
   createdAt: string
   /** 会計を行ったレジセッション */
   sessionId: number
+  paymentMethod: PaymentMethod
   items: SaleItem[]
   totalQty: number
   total: number
+  /** 現金：預かり金額 / PayPay：お客様が支払った金額（合計と同額） */
   received: number
+  /** PayPay は常に 0 */
   change: number
   status: SaleStatus
   cancelledAt?: string
@@ -78,6 +86,9 @@ export type CashSummary = {
   cashIn: number
   cashOut: number
   expected: number
+  /** 参考：当セッションの PayPay 売上（取消含む総額）と PayPay 返金。現金残高には含めない */
+  paypaySales?: number
+  paypayRefunds?: number
 }
 
 export type Closing = CashSummary & {

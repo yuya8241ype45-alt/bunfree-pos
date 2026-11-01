@@ -4,7 +4,9 @@ import type { PosDB } from './db'
 import { PosError } from './ops'
 
 export const BACKUP_FORMAT = 'bunfree-pos-backup'
-export const BACKUP_VERSION = 1
+/** v2: 会計に支払方法（paymentMethod）を追加。v1 のファイルは全会計を現金として読み込む */
+export const BACKUP_VERSION = 2
+const SUPPORTED_VERSIONS = [1, 2]
 
 export type BackupData = {
   products: Product[]
@@ -51,7 +53,9 @@ export function validateBackup(raw: unknown): Backup {
   }
 
   if (!isObj(raw) || raw.format !== BACKUP_FORMAT) throw new PosError('このアプリのバックアップファイルではありません')
-  if (raw.version !== BACKUP_VERSION) throw new PosError(`対応していないバックアップのバージョンです（${String(raw.version)}）`)
+  if (!SUPPORTED_VERSIONS.includes(raw.version as number)) {
+    throw new PosError(`対応していないバックアップのバージョンです（${String(raw.version)}）`)
+  }
   const d = raw.data
   if (!isObj(d)) throw new PosError('バックアップの data がありません')
   for (const k of ['products', 'sales', 'stockLogs', 'cashMoves', 'sessions', 'meta']) {
@@ -97,7 +101,10 @@ export function validateBackup(raw: unknown): Backup {
     }
     check(s.total === total, `${at}: 合計金額が明細と一致しない`)
     check(s.totalQty === qty, `${at}: 購入点数が明細と一致しない`)
+    if (s.paymentMethod === undefined) s.paymentMethod = 'cash'
+    check(s.paymentMethod === 'cash' || s.paymentMethod === 'paypay', `${at}: 支払方法が不正`)
     check(isYen(s.received) && s.change === s.received - s.total && s.change >= 0, `${at}: 預かり金額・お釣りが不正`)
+    if (s.paymentMethod === 'paypay') check(s.received === s.total, `${at}: PayPayの支払い金額が合計と一致しない`)
     if (s.status === 'cancelled') {
       check(s.refundAmount === s.total && isInt(s.refundSessionId) && isDate(s.cancelledAt), `${at}: 取消情報が不正`)
     }

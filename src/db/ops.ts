@@ -9,7 +9,7 @@ import {
   MAX_AMOUNT,
   MAX_PRICE,
 } from '../lib/calc'
-import type { CashSummary, Closing, Denoms, Product, Sale, SaleItem, Session } from '../lib/types'
+import type { CashSummary, Closing, Denoms, PaymentMethod, Product, Sale, SaleItem, Session } from '../lib/types'
 import type { PosDB } from './db'
 
 /** 利用者に見せるエラー。メッセージはそのまま画面に出す */
@@ -37,6 +37,8 @@ export type CheckoutInput = {
   /** 二重会計防止用の会計ID。同じIDで2回呼んでも1件しか保存されない */
   id: string
   lines: { productId: string; qty: number }[]
+  paymentMethod: PaymentMethod
+  /** 現金：預かり金額 / PayPay：お客様が支払った金額（合計と一致しなければ確定しない） */
   received: number
   /** 画面に表示していた合計金額。DB上の価格と食い違えば確定しない */
   expectedTotal: number
@@ -78,8 +80,18 @@ export async function checkout(db: PosDB, input: CheckoutInput): Promise<Sale> {
 
     const total = items.reduce((s, i) => s + i.subtotal, 0)
     if (total !== input.expectedTotal) fail('商品の価格が変更されています。会計内容を確認してください。')
-    const change = changeFor(total, input.received)
-    if (change === null) fail('預かり金額が不足しています')
+    let change: number | null
+    if (input.paymentMethod === 'paypay') {
+      if (input.received !== total) {
+        fail(`PayPayの支払い金額（${input.received.toLocaleString('ja-JP')}円）が合計（${total.toLocaleString('ja-JP')}円）と一致しません`)
+      }
+      change = 0
+    } else if (input.paymentMethod === 'cash') {
+      change = changeFor(total, input.received)
+      if (change === null) fail('預かり金額が不足しています')
+    } else {
+      fail('支払方法が不正です')
+    }
 
     const seq = ((await db.meta.get('saleSeq'))?.value as number | undefined) ?? 0
     const sale: Sale = {
@@ -87,6 +99,7 @@ export async function checkout(db: PosDB, input: CheckoutInput): Promise<Sale> {
       no: seq + 1,
       createdAt: at,
       sessionId: session.id,
+      paymentMethod: input.paymentMethod,
       items,
       totalQty: items.reduce((s, i) => s + i.qty, 0),
       total,
@@ -265,14 +278,23 @@ export async function getCashSummary(db: PosDB, session: Session & { id: number 
     db.sales.where('refundSessionId').equals(session.id).toArray(),
     db.cashMoves.where('sessionId').equals(session.id).toArray(),
   ])
+  const isPayPay = (x: Sale) => x.paymentMethod === 'paypay'
+  const sumTotal = (list: Sale[]) => list.reduce((s, x) => s + x.total, 0)
+  const sumRefund = (list: Sale[]) => list.reduce((s, x) => s + (x.refundAmount ?? 0), 0)
+  // レジの現金が動くのは現金会計だけ。PayPay の売上・返金は参考値として別に持つ
   const base = {
     float: session.float,
-    salesGross: made.reduce((s, x) => s + x.total, 0),
-    refunds: refunded.reduce((s, x) => s + (x.refundAmount ?? 0), 0),
+    salesGross: sumTotal(made.filter((x) => !isPayPay(x))),
+    refunds: sumRefund(refunded.filter((x) => !isPayPay(x))),
     cashIn: moves.filter((m) => m.type === 'in').reduce((s, m) => s + m.amount, 0),
     cashOut: moves.filter((m) => m.type === 'out').reduce((s, m) => s + m.amount, 0),
   }
-  return { ...base, expected: expectedCash(base) }
+  return {
+    ...base,
+    expected: expectedCash(base),
+    paypaySales: sumTotal(made.filter(isPayPay)),
+    paypayRefunds: sumRefund(refunded.filter(isPayPay)),
+  }
 }
 
 export async function closeSession(db: PosDB, denoms: Denoms): Promise<Closing> {
