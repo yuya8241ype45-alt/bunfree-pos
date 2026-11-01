@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# マニュアルの生成物
+docs/manual/manual.html
+docs/manual/manual.pdf

@@ -35,7 +35,8 @@ export default function Checkout({ sessionOpen, sessionLoaded, goRegister }: Pro
   const canCash = ready && change !== null
   // PayPay はお客様のスマホに表示された支払い金額を入力し、合計と一致したときだけ確定できる
   const canPayPay = ready && received === total
-  const payPayMismatch = lines.length > 0 && receivedStr !== '' && received !== total
+  // どちらの確定ボタンも押せないときだけ、PayPay の条件を案内する
+  const payPayMismatch = lines.length > 0 && receivedStr !== '' && received !== total && change === null
 
   const setQty = (id: string, qty: number) =>
     setCart((c) => {
@@ -177,9 +178,9 @@ export default function Checkout({ sessionOpen, sessionLoaded, goRegister }: Pro
         <div className="space-y-2 border-t border-gray-300 px-4 py-2">
           <div className="grid grid-cols-2 gap-2">
             <div className="rounded-md border border-gray-300 bg-white px-3 py-1">
-              <div className="flex items-center justify-between text-sm text-gray-600">
+              <div className="flex items-center justify-between text-sm whitespace-nowrap text-gray-600">
                 預かり／支払額
-                <button type="button" className="touch-manipulation px-2 text-sm font-bold text-blue-700" onClick={() => setReceivedStr('')}>
+                <button type="button" className="touch-manipulation pl-2 text-sm font-bold whitespace-nowrap text-blue-700" onClick={() => setReceivedStr('')}>
                   クリア
                 </button>
               </div>
